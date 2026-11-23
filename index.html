@@ -237,11 +237,12 @@
     <p class="note" style="margin:0 0 8px">写真を選ぶと「タイトル → 写真 → 結果カード」の動画を作ります（最大10枚）</p>
     <input type="file" id="digestPhotos" accept="image/*" multiple>
     <div id="digestThumbs"></div>
+    <button class="sub big" onclick="previewSound()">🔊 オープニングの音を試聴</button>
     <button class="big" id="digestBtn" onclick="makeDigest()">🎬 動画を作る</button>
     <div id="digestProgress" class="note" style="display:none"></div>
     <video id="digestVideo" controls playsinline style="display:none"></video>
     <button class="big" id="digestSaveBtn" onclick="saveDigest()" style="display:none">動画を保存する</button>
-    <p class="note">作っている間は、画面を閉じたりほかのアプリに切りかえたりしないでください。</p>
+    <p class="note">作っている間は、画面を閉じたりほかのアプリに切りかえたりしないでください。オープニングの音が鳴ります（マナーモードだと聞こえないことがあります）。</p>
   </section>
 
   <button class="big" id="saveBtn" onclick="saveMatch()">💾 この試合を保存</button>
@@ -1174,9 +1175,104 @@ function drawTitle(x, t, d, F) {
   x.restore();
 }
 
+// ===== オープニングの音（プログラムで一から作るオリジナルの音） =====
+// ac ＝ 音を作る道具（AudioContext）、out ＝ 音の出口、t ＝ 鳴らしはじめる時刻
+function playIntroSound(ac, out, t) {
+  // 全体の音量と、音割れを防ぐコンプレッサー
+  const master = ac.createGain();
+  master.gain.value = 0.9;
+  const comp = ac.createDynamicsCompressor();
+  master.connect(comp);
+  comp.connect(out);
+
+  // ノイズ（「シャー」という音のもと）
+  const noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  const nd = noiseBuf.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  const noise = (start, dur, type, f1, f2, vol) => {
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    const filt = ac.createBiquadFilter();
+    filt.type = type;
+    filt.frequency.setValueAtTime(f1, start);
+    filt.frequency.exponentialRampToValueAtTime(f2, start + dur);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(vol, start);
+    g.gain.exponentialRampToValueAtTime(0.001, start + dur);
+    src.connect(filt); filt.connect(g); g.connect(master);
+    src.start(start); src.stop(start + dur);
+  };
+
+  // バスドラム（「ドンッ」）
+  const kick = (start, vol = 1) => {
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(140, start);
+    o.frequency.exponentialRampToValueAtTime(40, start + 0.35);
+    g.gain.setValueAtTime(vol, start);
+    g.gain.exponentialRampToValueAtTime(0.001, start + 0.6);
+    o.connect(g); g.connect(master);
+    o.start(start); o.stop(start + 0.6);
+  };
+
+  // スネア（「タッ」）
+  const snare = (start) => noise(start, 0.18, "bandpass", 1800, 1200, 0.5);
+
+  // シンセの和音（「ジャーン」）
+  const chord = (start, freqs, dur, vol) => {
+    const filt = ac.createBiquadFilter();
+    filt.type = "lowpass";
+    filt.frequency.setValueAtTime(600, start);
+    filt.frequency.exponentialRampToValueAtTime(3500, start + 0.15);
+    filt.frequency.exponentialRampToValueAtTime(900, start + dur);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, start);
+    g.gain.exponentialRampToValueAtTime(vol, start + 0.02);
+    g.gain.exponentialRampToValueAtTime(vol * 0.35, start + 0.4);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    filt.connect(g); g.connect(master);
+    freqs.forEach((f) => {
+      [-6, 6].forEach((detune) => {             // 少しずらした音を重ねて、厚みを出す
+        const o = ac.createOscillator();
+        o.type = "sawtooth";
+        o.frequency.value = f;
+        o.detune.value = detune;
+        o.connect(filt);
+        o.start(start); o.stop(start + dur);
+      });
+    });
+  };
+
+  // ---- 流れ（画面の動きにあわせる） ----
+  noise(t, 0.32, "bandpass", 300, 7000, 1.0);           // 0秒：シュワーッと上がる
+  kick(t + 0.3, 1.2);                                   // 0.3秒：ドンッ！（エンブレム登場）
+  noise(t + 0.3, 1.2, "highpass", 6000, 3000, 0.25);    //       シンバルのような余韻
+  chord(t + 0.3, [110, 164.8, 220, 261.6, 329.6], 1.0, 0.09);
+  kick(t + 0.8); kick(t + 1.0); snare(t + 1.0);         // 0.8秒〜：ドッ・ドッ
+  kick(t + 1.15, 0.9); kick(t + 1.3, 1.2); snare(t + 1.3); //        ・ダダッ
+  noise(t + 1.3, 1.6, "highpass", 6000, 2500, 0.22);
+  chord(t + 1.3, [146.8, 220, 293.7, 349.2, 440], 2.1, 0.08); // 1.3秒〜：ジャーン（だんだん小さく）
+}
+
+// 「🔊 音を試聴」
+function previewSound() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    ac.resume();
+    playIntroSound(ac, ac.destination, ac.currentTime + 0.05);
+    setTimeout(() => ac.close(), 4500);
+  } catch (e) {
+    showToast("このブラウザでは音を鳴らせません");
+  }
+}
+
 // 録画に使える動画の形式を選ぶ（iPhoneはmp4、パソコンのChromeはwebmなど）
 function pickMime() {
-  const list = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+  const list = [
+    "video/mp4;codecs=avc1,mp4a.40.2", "video/mp4;codecs=avc1", "video/mp4",
+    "video/webm;codecs=vp9,opus", "video/webm;codecs=vp9", "video/webm",
+  ];
   return list.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
 }
 
@@ -1193,8 +1289,19 @@ async function makeDigest() {
   const total = segs.reduce((a, s) => a + s.dur, 0);
   drawDigestFrame(dctx, segs, 0);
 
+  // 音の準備（ボタンを押した直後に作らないと、iPhoneでは音が出ないため、ここで作る）
+  let ac = null, audioDest = null;
+  try {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    ac.resume();
+    if (ac.createMediaStreamDestination) audioDest = ac.createMediaStreamDestination();
+  } catch (e) { ac = null; }
+
+  // 映像（キャンバス）と音をまとめて録画する
   const mime = pickMime();
-  const stream = vc.captureStream(30);
+  const tracks = [...vc.captureStream(30).getVideoTracks()];
+  if (audioDest) tracks.push(...audioDest.stream.getAudioTracks());
+  const stream = new MediaStream(tracks);
   const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 4000000 } : {});
   const chunks = [];
   rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
@@ -1207,6 +1314,13 @@ async function makeDigest() {
   const done = new Promise((resolve) => { rec.onstop = resolve; });
   rec.start();
   const t0 = performance.now();
+  // 録画の開始と同時に、オープニングの音を鳴らす（録画にも、スピーカーにも流す）
+  if (ac) {
+    const out = ac.createGain();
+    if (audioDest) out.connect(audioDest);
+    out.connect(ac.destination);
+    playIntroSound(ac, out, ac.currentTime);
+  }
   await new Promise((resolve) => {
     function frame() {
       const t = (performance.now() - t0) / 1000;
@@ -1219,6 +1333,7 @@ async function makeDigest() {
   });
   rec.stop();
   await done;
+  if (ac) ac.close();
 
   digestBlob = new Blob(chunks, { type: rec.mimeType || mime || "video/mp4" });
   $("digestVideo").src = URL.createObjectURL(digestBlob);
