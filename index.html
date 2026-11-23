@@ -696,104 +696,181 @@ function autoComment(d) {
   return t;
 }
 
-// ===== カード画像を描く =====
+// ===== カード画像を描く（オープニングと同じ、紺・青・ゴールドのデザイン） =====
 function drawCard(d) {
-  const W = canvas.width, H = canvas.height;
-  const font = '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif';
+  const W = canvas.width, H = canvas.height;   // 1080 × 1350
+  const F = '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif';
+  const x = ctx;
+  const CUT_L = 900, CUT_R = 760;              // 写真の下の斜めの切れ目（左が低く、右が高い）
+  x.save();
+  x.textBaseline = "middle";
 
-  // 1) 背景：写真があれば写真、なければ芝生っぽい緑
+  // 1) 背景：紺のグラデーション
+  const bg = x.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, "#0d1a6e");
+  bg.addColorStop(1, "#040824");
+  x.fillStyle = bg;
+  x.fillRect(0, 0, W, H);
+
+  // 2) 上の部分に写真（下を斜めに切る）
+  x.save();
+  x.beginPath();
+  x.moveTo(0, 0); x.lineTo(W, 0); x.lineTo(W, CUT_R); x.lineTo(0, CUT_L);
+  x.closePath();
+  x.clip();
   if (photo) {
-    // 写真を枠いっぱいに、はみ出た分を切って中央に置く
-    const scale = Math.max(W / photo.width, H / photo.height);
-    const w = photo.width * scale, h = photo.height * scale;
-    ctx.drawImage(photo, (W - w) / 2, (H - h) / 2, w, h);
+    const s = Math.max(W / photo.width, CUT_L / photo.height);
+    const w = photo.width * s, h = photo.height * s;
+    x.drawImage(photo, (W - w) / 2, (CUT_L - h) / 2, w, h);
   } else {
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, "#2e9e4f");
-    g.addColorStop(1, "#14612a");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H);
-    // 芝のしま模様
-    ctx.fillStyle = "rgba(255,255,255,0.05)";
-    for (let y = 0; y < H; y += 180) ctx.fillRect(0, y, W, 90);
+    // 写真がないときは、青の斜めストライプ
+    const g = x.createLinearGradient(0, 0, W, CUT_L);
+    g.addColorStop(0, "#2433b5");
+    g.addColorStop(1, "#0d1a6e");
+    x.fillStyle = g;
+    x.fillRect(0, 0, W, CUT_L);
+    x.save();
+    x.translate(W / 2, CUT_L / 2); x.rotate(-0.38); x.translate(-W / 2, -CUT_L / 2);
+    x.fillStyle = "rgba(255,255,255,0.06)";
+    for (let i = -10; i < 30; i++) x.fillRect(-600, i * 60, 2400, 24);
+    x.restore();
+  }
+  // 文字が読みやすいように、上と下を少し暗くする
+  let g = x.createLinearGradient(0, 0, 0, 240);
+  g.addColorStop(0, "rgba(0,0,0,0.55)");
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  x.fillStyle = g;
+  x.fillRect(0, 0, W, 240);
+  g = x.createLinearGradient(0, CUT_R - 200, 0, CUT_L);
+  g.addColorStop(0, "rgba(4,8,36,0)");
+  g.addColorStop(1, "rgba(4,8,36,0.6)");
+  x.fillStyle = g;
+  x.fillRect(0, CUT_R - 200, W, 400);
+  x.restore();
+
+  // 3) 切れ目にそって、白い線とゴールドの帯
+  const slash = (offset, width, color) => {
+    x.beginPath();
+    x.moveTo(0, CUT_L + offset);
+    x.lineTo(W, CUT_R + offset);
+    x.lineWidth = width;
+    x.strokeStyle = color;
+    x.stroke();
+  };
+  slash(8, 10, "#fff");
+  slash(30, 20, GOLD);
+  // 下の部分のうすいストライプ
+  x.save();
+  x.beginPath();
+  x.moveTo(0, CUT_L + 44); x.lineTo(W, CUT_R + 44); x.lineTo(W, H); x.lineTo(0, H);
+  x.closePath();
+  x.clip();
+  x.translate(W / 2, H / 2); x.rotate(-0.13); x.translate(-W / 2, -H / 2);
+  x.fillStyle = "rgba(255,255,255,0.04)";
+  for (let i = 0; i < 20; i++) x.fillRect(-200, 820 + i * 46, W + 400, 16);
+  x.restore();
+
+  // 4) 左上の「FULL TIME」
+  x.fillStyle = GOLD;
+  x.fillRect(60, 64, 12, 76);
+  x.fillStyle = "#fff";
+  x.textAlign = "left";
+  x.font = `italic 900 60px ${F}`;
+  x.fillText("FULL TIME", 92, 104);
+
+  // 5) 右上のエンブレム（白い丸 ＋ ゴールドのふち）
+  if (emblem) {
+    const cx = W - 140, cy = 140, R = 95;
+    x.save();
+    x.shadowColor = "rgba(0,0,0,0.4)";
+    x.shadowBlur = 20;
+    x.beginPath();
+    x.arc(cx, cy, R, 0, Math.PI * 2);
+    x.fillStyle = "#fff";
+    x.fill();
+    x.shadowBlur = 0;
+    x.lineWidth = 8;
+    x.strokeStyle = GOLD;
+    x.stroke();
+    x.beginPath();
+    x.arc(cx, cy, R - 4, 0, Math.PI * 2);
+    x.clip();
+    const s = R * 1.5;
+    x.drawImage(emblem, cx - s / 2, cy - s / 2, s, s);
+    x.restore();
   }
 
-  // 2) 文字を読みやすくするため、上と下を暗くする
-  let g = ctx.createLinearGradient(0, 0, 0, 260);
-  g.addColorStop(0, "rgba(0,0,0,0.6)");
-  g.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, W, 260);
+  // 6) 結果バッジ（WIN / DRAW / LOSE）を、切れ目の上に斜めの形で
+  const badge = { WIN: [GOLD, "#0d1a6e"], DRAW: ["#fff", "#0d1a6e"], LOSE: ["#2433b5", "#fff"] }[d.resultEn];
+  x.font = `italic 900 64px ${F}`;
+  const bw = x.measureText(d.resultEn).width + 110, by = 860;
+  x.beginPath();
+  x.moveTo(W / 2 - bw / 2 + 20, by - 42); x.lineTo(W / 2 + bw / 2 + 20, by - 42);
+  x.lineTo(W / 2 + bw / 2 - 20, by + 42); x.lineTo(W / 2 - bw / 2 - 20, by + 42);
+  x.closePath();
+  x.fillStyle = badge[0];
+  x.fill();
+  x.fillStyle = badge[1];
+  x.textAlign = "center";
+  x.fillText(d.resultEn, W / 2, by + 3);
 
-  g = ctx.createLinearGradient(0, H - 640, 0, H);
-  g.addColorStop(0, "rgba(0,0,0,0)");
-  g.addColorStop(0.35, "rgba(0,0,0,0.65)");
-  g.addColorStop(1, "rgba(0,0,0,0.85)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, H - 640, W, 640);
+  // 7) スコア（大きく）
+  x.fillStyle = "#fff";
+  x.font = `italic 900 230px ${F}`;
+  x.fillText(`${d.our} - ${d.opp}`, W / 2, 1035);
 
-  ctx.fillStyle = "#fff";
-  ctx.textBaseline = "middle";
+  // 8) チーム名（左右）と、まんなかにゴールドの「VS」
+  fitCardText(d.ourTeam, W / 4, 1170, W / 2 - 120, 52, "italic 900", F);
+  fitCardText(d.oppTeam, (W * 3) / 4, 1170, W / 2 - 120, 52, "italic 900", F);
+  x.beginPath();
+  x.moveTo(W / 2 - 44, 1148); x.lineTo(W / 2 + 54, 1148); x.lineTo(W / 2 + 44, 1192); x.lineTo(W / 2 - 54, 1192);
+  x.closePath();
+  x.fillStyle = GOLD;
+  x.fill();
+  x.fillStyle = "#0d1a6e";
+  x.font = `italic 900 32px ${F}`;
+  x.fillText("VS", W / 2, 1171);
 
-  // 3) 上：日付と試合名
-  ctx.textAlign = "left";
-  ctx.font = `bold 44px ${font}`;
-  fitText(`${d.dateText}  ${d.matchName}`, 60, 90, W - 120, 44, font);
-
-  // 4) 結果バッジ（WIN / DRAW / LOSE）
-  const badgeY = H - 500;
-  ctx.font = `900 56px ${font}`;
-  const bw = ctx.measureText(d.resultEn).width + 80;
-  ctx.fillStyle = d.color;
-  roundRect((W - bw) / 2, badgeY - 45, bw, 90, 45);
-  ctx.fillStyle = "#fff";
-  ctx.textAlign = "center";
-  ctx.fillText(d.resultEn, W / 2, badgeY + 3);
-
-  // 5) スコア（大きく）
-  ctx.font = `900 220px ${font}`;
-  ctx.fillText(`${d.our} - ${d.opp}`, W / 2, H - 320);
-
-  // 6) チーム名（スコアの下、左右）
-  ctx.font = `bold 46px ${font}`;
-  fitText(d.ourTeam, W / 4, H - 175, W / 2 - 60, 46, font);
-  fitText(d.oppTeam, (W * 3) / 4, H - 175, W / 2 - 60, 46, font);
-  ctx.font = `bold 36px ${font}`;
-  ctx.fillText("vs", W / 2, H - 175);
-
-  // 7) 得点者（いちばん下に1行で）
+  // 9) 得点者
   if (d.scorers.length) {
     const names = d.scorers.map((s) => scorerLabel(s, false)).join("・");
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    fitText(`⚽ ${names}`, W / 2, H - 85, W - 120, 36, font);
+    x.fillStyle = "rgba(255,255,255,0.9)";
+    fitCardText(`⚽ ${names}`, W / 2, 1232, W - 140, 34, "bold", F);
   }
+
+  // 10) いちばん下の白い帯：「2026.11.23 MON | 大会名」
+  x.beginPath();
+  x.moveTo(110, 1268); x.lineTo(W - 70, 1268); x.lineTo(W - 110, 1326); x.lineTo(70, 1326);
+  x.closePath();
+  x.fillStyle = "#fff";
+  x.fill();
+  x.fillStyle = "#0d1a6e";
+  fitCardText(`${dateLabelEn()}  |  ${d.matchName}`, W / 2, 1298, W - 260, 34, "italic 900", F);
+
+  x.restore();
 
   // できた画像を画面に表示（長押しで保存できるように <img> にする）
   $("cardImg").src = canvas.toDataURL("image/jpeg", 0.9);
 }
 
 // 文字が長すぎるときは小さくして枠に収める
-function fitText(text, x, y, maxWidth, size, font) {
-  const weight = ctx.font.split(" ")[0];
+function fitCardText(text, cx, cy, maxWidth, size, style, F) {
   let s = size;
-  ctx.font = `${weight} ${s}px ${font}`;
-  while (ctx.measureText(text).width > maxWidth && s > 20) {
+  ctx.font = `${style} ${s}px ${F}`;
+  while (ctx.measureText(text).width > maxWidth && s > 18) {
     s -= 2;
-    ctx.font = `${weight} ${s}px ${font}`;
+    ctx.font = `${style} ${s}px ${F}`;
   }
-  ctx.fillText(text, x, y);
+  ctx.textAlign = "center";
+  ctx.fillText(text, cx, cy);
 }
 
-// 角の丸い四角を描く
-function roundRect(x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-  ctx.fill();
+// 日付を「2026.11.23 MON」の形にする
+function dateLabelEn() {
+  const v = $("date").value || new Date().toLocaleDateString("sv-SE");
+  const dt = new Date(v + "T00:00:00");
+  const wk = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][dt.getDay()];
+  return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")} ${wk}`;
 }
 
 // ===== 画像を保存する =====
@@ -848,7 +925,7 @@ let emblem = null;     // タイトルに使うエンブレム（icon.png）
 // エンブレムを読みこんでおく
 (() => {
   const img = new Image();
-  img.onload = () => { emblem = img; };
+  img.onload = () => { emblem = img; update(); }; // 読みこめたら、結果カードにもエンブレムを入れる
   img.src = "icon.png";
 })();
 
@@ -951,15 +1028,6 @@ function drawSegment(dctx, seg, local) {
     dctx.fillStyle = "#000";
     dctx.fillRect(0, 0, DW, DH);
     dctx.drawImage(img, (DW - w) / 2, (DH - h) / 2, w, h);
-    // 下にスコアの帯
-    const g = dctx.createLinearGradient(0, DH - 200, 0, DH);
-    g.addColorStop(0, "rgba(0,0,0,0)");
-    g.addColorStop(1, "rgba(0,0,0,0.75)");
-    dctx.fillStyle = g;
-    dctx.fillRect(0, DH - 200, DW, 200);
-    dctx.fillStyle = "#fff";
-    dctx.font = `bold 38px ${font}`;
-    dctx.fillText(`${d.ourTeam}  ${d.our} - ${d.opp}  ${d.oppTeam}`, DW / 2, DH - 60, DW - 60);
     return;
   }
 
