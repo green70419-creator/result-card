@@ -91,6 +91,15 @@
   }
   .item span { flex: 1; }
   .item button { flex: 0 0 40px; height: 36px; padding: 0; }
+  /* 試合の記録の1行 */
+  .hist { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
+  .hist .open {
+    flex: 1; text-align: left; background: none; color: var(--text);
+    font-weight: normal; padding: 10px 0; line-height: 1.5;
+  }
+  .hist .open b { font-size: 17px; }
+  .hist .del { flex: 0 0 40px; height: 36px; }
+  .tag { display: inline-block; font-size: 12px; color: #fff; padding: 1px 8px; border-radius: 10px; margin-left: 4px; }
   details { margin-top: 16px; }
   summary { color: var(--main); font-weight: bold; font-size: 14px; padding: 6px 0; cursor: pointer; }
   details .scorer { margin-top: 10px; }
@@ -208,8 +217,16 @@
     <p class="note">BANDで新しく投稿 → 文章を貼り付け → カード画像を添付すれば完成です。</p>
   </section>
 
+  <button class="big" id="saveBtn" onclick="saveMatch()">💾 この試合を保存</button>
   <button class="big danger" onclick="resetMatch()">🔄 リセット（次の試合へ）</button>
-  <p class="note" style="text-align:center">自チーム名と選手名簿は残ります</p>
+  <p class="note" style="text-align:center">自チーム名・選手名簿・試合の記録は残ります</p>
+
+  <!-- ===== 3. 試合の記録 ===== -->
+  <section style="margin-top:16px">
+    <h2>⑥ 試合の記録</h2>
+    <div id="historyList"></div>
+    <p class="note">タップすると、その試合を入力欄に読みこみます。</p>
+  </section>
 </main>
 
 <div id="toast"></div>
@@ -281,8 +298,12 @@ function removePlayer(num) {
 // 背番号から名前を探す
 function nameOf(num) {
   const p = roster.find((p) => p.num === num);
-  return p ? p.name : "";
+  if (p) return p.name;
+  return savedNames[num] || ""; // 名簿から消した子でも、記録に残っている名前を使う
 }
+
+// 記録から読みこんだ試合の「背番号→名前」（名簿が変わっても名前が消えないように）
+let savedNames = {};
 
 // ===== スコア =====
 let ourScore = 0; // 自チームの点
@@ -325,9 +346,161 @@ function resetMatch() {
   commentEdited = false;
   photo = null;
   $("photo").value = "";
+  currentId = null;
+  savedNames = {};
   renderPlayers();
   window.scrollTo(0, 0);
   showToast("リセットしました");
+}
+
+// ===== 試合の記録 =====
+// matches ＝ 保存した試合の一覧。iPhoneの中に保存する
+let matches = [];
+try { matches = JSON.parse(localStorage.getItem("matches")) || []; } catch (e) {}
+
+// 今入力している試合が、記録のどれか（読みこんだ／保存した試合なら、その番号）
+let currentId = null;
+
+function saveMatches() {
+  try {
+    localStorage.setItem("matches", JSON.stringify(matches));
+    return true;
+  } catch (e) {
+    showToast("保存できませんでした（容量がいっぱいかもしれません）");
+    return false;
+  }
+}
+
+// 今の入力内容を、保存用の形にまとめる
+function currentMatch() {
+  const names = {};
+  goals.forEach((num) => { names[num] = nameOf(num); });
+  return {
+    date: $("date").value,
+    matchName: $("matchName").value,
+    ourTeam: $("ourTeam").value,
+    oppTeam: $("oppTeam").value,
+    our: ourScore,
+    opp: oppScore,
+    goals: [...goals],
+    names,
+    comment: $("comment").value,
+    commentEdited,
+  };
+}
+
+// 「この試合を保存」
+function saveMatch() {
+  const m = currentMatch();
+  const i = matches.findIndex((x) => x.id === currentId);
+  if (i >= 0) {
+    m.id = currentId;
+    matches[i] = m;          // 前に保存した試合なら、上書き
+  } else {
+    m.id = Date.now();       // 新しい試合なら、番号をつけて追加
+    matches.push(m);
+    currentId = m.id;
+  }
+  if (!saveMatches()) return;
+  renderHistory();
+  update();
+  showToast(i >= 0 ? "上書き保存しました" : "保存しました");
+}
+
+// 記録から、入力欄に読みこむ
+function loadMatch(id) {
+  const m = matches.find((x) => x.id === id);
+  if (!m) return;
+  if (!confirm("この試合を読みこみますか？\n（今入力している内容は置きかわります）")) return;
+  applyMatch(m);
+  currentId = m.id;
+  photo = null;
+  $("photo").value = "";
+  renderPlayers();
+  window.scrollTo(0, 0);
+  showToast("読みこみました");
+}
+
+// 保存した内容を入力欄に入れる（記録の読みこみと、自動保存からの復元で使う）
+function applyMatch(m) {
+  $("date").value = m.date || new Date().toLocaleDateString("sv-SE");
+  $("matchName").value = m.matchName || "";
+  if (m.ourTeam) $("ourTeam").value = m.ourTeam;
+  $("oppTeam").value = m.oppTeam || "";
+  ourScore = m.our || 0;
+  oppScore = m.opp || 0;
+  goals = [...(m.goals || [])];
+  savedNames = m.names || {};
+  $("comment").value = m.comment || "";
+  commentEdited = !!m.commentEdited;
+}
+
+function deleteMatch(id) {
+  const m = matches.find((x) => x.id === id);
+  if (!m) return;
+  if (!confirm(`${shortDate(m.date)} vs ${m.oppTeam || "相手チーム"} の記録を削除しますか？\n（元に戻せません）`)) return;
+  matches = matches.filter((x) => x.id !== id);
+  if (currentId === id) currentId = null;
+  saveMatches();
+  renderHistory();
+  update();
+}
+
+// 「2026-11-23」→「11/23（月）」
+function shortDate(s) {
+  if (!s) return "";
+  const d = new Date(s + "T00:00:00");
+  return `${d.getMonth() + 1}/${d.getDate()}（${"日月火水木金土"[d.getDay()]}）`;
+}
+
+// 記録の一覧を画面に表示する（新しい日付が上）
+function renderHistory() {
+  const list = $("historyList");
+  list.innerHTML = "";
+  if (!matches.length) {
+    list.innerHTML = '<p class="note" style="margin:0">まだ保存した試合はありません。</p>';
+    return;
+  }
+  const sorted = [...matches].sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id - a.id);
+  sorted.forEach((m) => {
+    let res = ["引き分け", "#8e8e93"];
+    if (m.our > m.opp) res = ["勝ち", "#e8a400"];
+    if (m.our < m.opp) res = ["負け", "#3a6fd8"];
+    const div = document.createElement("div");
+    div.className = "hist";
+    div.innerHTML = `
+      <button class="open"><span class="d"></span><br><b class="s"></b><span class="tag"></span></button>
+      <button class="del" title="削除">✕</button>`;
+    div.querySelector(".d").textContent = `${shortDate(m.date)} ${m.matchName || ""}`;
+    div.querySelector(".s").textContent = `vs ${m.oppTeam || "相手チーム"}　${m.our}-${m.opp}`;
+    div.querySelector(".tag").textContent = res[0];
+    div.querySelector(".tag").style.background = res[1];
+    if (m.id === currentId) div.style.background = "#eef6f0"; // 今開いている試合に色をつける
+    div.querySelector(".open").onclick = () => loadMatch(m.id);
+    div.querySelector(".del").onclick = () => deleteMatch(m.id);
+    list.appendChild(div);
+  });
+}
+
+// ===== 入力途中の自動保存 =====
+// 入力が変わるたびに、今の内容を「下書き」としてiPhoneに保存しておく
+function saveDraft() {
+  try {
+    const d = currentMatch();
+    d.currentId = currentId;
+    localStorage.setItem("draft", JSON.stringify(d));
+  } catch (e) {}
+}
+
+// アプリを開いたときに、下書きがあれば元に戻す
+function restoreDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem("draft"));
+    if (!d) return;
+    applyMatch(d);
+    // 下書きのもとになった記録が、まだ残っているときだけ「上書き保存」にする
+    currentId = matches.some((x) => x.id === d.currentId) ? d.currentId : null;
+  } catch (e) {}
 }
 
 // 得点者をまとめる（同じ子の点は「×2」にする）
@@ -440,6 +613,9 @@ function update() {
   $("oppScoreView").textContent = data.opp;
   $("ourNameView").textContent = data.ourTeam;
   $("oppNameView").textContent = data.oppTeam;
+  // 保存ボタンの文字（前に保存した試合なら「上書き保存」）
+  $("saveBtn").textContent = currentId ? "💾 上書き保存" : "💾 この試合を保存";
+  saveDraft();
   drawCard(data);
   $("postText").value = makeText(data);
 }
@@ -620,7 +796,9 @@ function showToast(msg) {
   setTimeout(() => ($("toast").style.display = "none"), 2500);
 }
 
-// 最初に1回描いておく
+// 最初に：下書きを戻して、記録の一覧と画面を表示する
+restoreDraft();
+renderHistory();
 renderPlayers();
 </script>
 </body>
