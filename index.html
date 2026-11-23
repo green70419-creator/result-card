@@ -219,7 +219,7 @@
 
   <button class="big" id="saveBtn" onclick="saveMatch()">💾 この試合を保存</button>
   <button class="big danger" onclick="resetMatch()">🔄 リセット（次の試合へ）</button>
-  <p class="note" style="text-align:center">自チーム名・選手名簿・試合の記録は残ります</p>
+  <p class="note" style="text-align:center">自チーム名・選手名簿・試合の記録は残ります<br>試合名は、同じ日なら残ります</p>
 
   <!-- ===== 3. 試合の記録 ===== -->
   <section style="margin-top:16px">
@@ -335,9 +335,11 @@ function removeGoal(num) {
 
 // ===== リセット（次の試合へ） =====
 function resetMatch() {
-  if (!confirm("次の試合の準備をしますか？\n（スコア・得点者・コメント・写真が消えます）")) return;
-  $("date").value = new Date().toLocaleDateString("sv-SE");
-  $("matchName").value = "";
+  if (!confirm("次の試合の準備をしますか？\n（相手チーム・スコア・得点者・コメント・写真が消えます）")) return;
+  // 同じ日なら同じ大会のことが多いので、試合名は残す。日付が変わるときだけ消す
+  const today = new Date().toLocaleDateString("sv-SE");
+  if ($("date").value !== today) $("matchName").value = "";
+  $("date").value = today;
   $("oppTeam").value = "";
   ourScore = 0;
   oppScore = 0;
