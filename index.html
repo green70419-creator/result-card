@@ -100,6 +100,20 @@
   .hist .open b { font-size: 17px; }
   .hist .del { flex: 0 0 40px; height: 36px; }
   .tag { display: inline-block; font-size: 12px; color: #fff; padding: 1px 8px; border-radius: 10px; margin-left: 4px; }
+  /* ダイジェスト動画 */
+  #digestThumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  #digestThumbs div { position: relative; width: 64px; height: 80px; }
+  #digestThumbs img { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
+  #digestThumbs span {
+    position: absolute; left: 3px; top: 3px; background: rgba(0,0,0,.6); color: #fff;
+    font-size: 11px; border-radius: 8px; padding: 0 5px;
+  }
+  #digestThumbs button {
+    position: absolute; right: -6px; top: -6px; width: 22px; height: 22px; padding: 0;
+    border-radius: 11px; font-size: 12px; background: #b3261e;
+  }
+  #digestVideo { width: 100%; border-radius: 8px; margin-top: 10px; background: #000; }
+  button:disabled { opacity: .5; }
   details { margin-top: 16px; }
   summary { color: var(--main); font-weight: bold; font-size: 14px; padding: 6px 0; cursor: pointer; }
   details .scorer { margin-top: 10px; }
@@ -217,13 +231,26 @@
     <p class="note">BANDで新しく投稿 → 文章を貼り付け → カード画像を添付すれば完成です。</p>
   </section>
 
+  <!-- ===== ダイジェスト動画 ===== -->
+  <section>
+    <h2>⑥ ダイジェスト動画</h2>
+    <p class="note" style="margin:0 0 8px">写真を選ぶと「タイトル → 写真 → 結果カード」の動画を作ります（最大10枚）</p>
+    <input type="file" id="digestPhotos" accept="image/*" multiple>
+    <div id="digestThumbs"></div>
+    <button class="big" id="digestBtn" onclick="makeDigest()">🎬 動画を作る</button>
+    <div id="digestProgress" class="note" style="display:none"></div>
+    <video id="digestVideo" controls playsinline style="display:none"></video>
+    <button class="big" id="digestSaveBtn" onclick="saveDigest()" style="display:none">動画を保存する</button>
+    <p class="note">作っている間は、画面を閉じたりほかのアプリに切りかえたりしないでください。</p>
+  </section>
+
   <button class="big" id="saveBtn" onclick="saveMatch()">💾 この試合を保存</button>
   <button class="big danger" onclick="resetMatch()">🔄 リセット（次の試合へ）</button>
   <p class="note" style="text-align:center">自チーム名・選手名簿・試合の記録は残ります<br>試合名は、同じ日なら残ります</p>
 
   <!-- ===== 3. 試合の記録 ===== -->
   <section style="margin-top:16px">
-    <h2>⑥ 試合の記録</h2>
+    <h2>⑦ 試合の記録</h2>
     <div id="historyList"></div>
     <p class="note">タップすると、その試合を入力欄に読みこみます。</p>
   </section>
@@ -350,6 +377,13 @@ function resetMatch() {
   $("photo").value = "";
   currentId = null;
   savedNames = {};
+  // ダイジェスト動画もまっさらにする
+  digestImgs = [];
+  digestBlob = null;
+  renderDigestThumbs();
+  $("digestVideo").style.display = "none";
+  $("digestSaveBtn").style.display = "none";
+  $("digestProgress").style.display = "none";
   renderPlayers();
   window.scrollTo(0, 0);
   showToast("リセットしました");
@@ -796,6 +830,237 @@ function showToast(msg) {
   $("toast").textContent = msg;
   $("toast").style.display = "block";
   setTimeout(() => ($("toast").style.display = "none"), 2500);
+}
+
+// ===== ダイジェスト動画 =====
+// しくみ：見えないキャンバスに1コマずつ絵を描き、それを録画して動画にする
+const DW = 720, DH = 900;          // 動画の大きさ（縦長 4:5）
+const PHOTO_SEC = 3;               // 写真1枚を見せる秒数
+const TITLE_SEC = 2.5;             // 最初のタイトルの秒数
+const END_SEC = 4;                 // 最後の結果カードの秒数
+const FADE_SEC = 0.5;              // 切りかわりのフェードの秒数
+const MAX_PHOTOS = 10;
+
+let digestImgs = [];   // 選んだ写真（小さく縮めたもの）
+let digestBlob = null; // できあがった動画
+let emblem = null;     // タイトルに使うエンブレム（icon.png）
+
+// エンブレムを読みこんでおく
+(() => {
+  const img = new Image();
+  img.onload = () => { emblem = img; };
+  img.src = "icon.png";
+})();
+
+// 写真を選んだとき：1枚ずつ小さく縮めて覚えておく（iPhoneのメモリ不足を防ぐため）
+$("digestPhotos").addEventListener("change", async () => {
+  const files = [...$("digestPhotos").files];
+  $("digestPhotos").value = "";
+  for (const file of files) {
+    if (digestImgs.length >= MAX_PHOTOS) { showToast(`写真は${MAX_PHOTOS}枚までです`); break; }
+    const small = await shrinkImage(file, 1100);
+    if (small) digestImgs.push(small);
+  }
+  renderDigestThumbs();
+});
+
+function shrinkImage(file, maxSize) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(1, maxSize / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * s);
+      c.height = Math.round(img.height * s);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+// 選んだ写真の小さな一覧（順番どおり。✕で外せる）
+function renderDigestThumbs() {
+  const box = $("digestThumbs");
+  box.innerHTML = "";
+  digestImgs.forEach((c, i) => {
+    const div = document.createElement("div");
+    div.innerHTML = `<img><span>${i + 1}</span><button title="外す">✕</button>`;
+    div.querySelector("img").src = c.toDataURL("image/jpeg", 0.5);
+    div.querySelector("button").onclick = () => { digestImgs.splice(i, 1); renderDigestThumbs(); };
+    box.appendChild(div);
+  });
+  const sec = TITLE_SEC + digestImgs.length * PHOTO_SEC + END_SEC;
+  $("digestBtn").textContent = digestImgs.length
+    ? `🎬 動画を作る（${digestImgs.length}枚・約${Math.round(sec)}秒）`
+    : "🎬 動画を作る";
+}
+
+// 動画の流れ（タイトル → 写真 → 結果カード）
+function digestSegments() {
+  return [
+    { type: "title", dur: TITLE_SEC },
+    ...digestImgs.map((img, i) => ({ type: "photo", img, dur: PHOTO_SEC, i })),
+    { type: "end", dur: END_SEC },
+  ];
+}
+
+// t秒目の1コマを描く
+function drawDigestFrame(dctx, segs, t) {
+  let start = 0;
+  for (let k = 0; k < segs.length; k++) {
+    const seg = segs[k];
+    if (t < start + seg.dur || k === segs.length - 1) {
+      const local = Math.min(t - start, seg.dur);
+      // 切りかわりの最初は、前の場面の上にふわっと重ねる（フェード）
+      if (k > 0 && local < FADE_SEC) {
+        const prev = segs[k - 1];
+        drawSegment(dctx, prev, prev.dur + local);
+        dctx.globalAlpha = local / FADE_SEC;
+        drawSegment(dctx, seg, local);
+        dctx.globalAlpha = 1;
+      } else {
+        drawSegment(dctx, seg, local);
+      }
+      return;
+    }
+    start += seg.dur;
+  }
+}
+
+function drawSegment(dctx, seg, local) {
+  const d = getData();
+  const font = '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif';
+  dctx.textAlign = "center";
+  dctx.textBaseline = "middle";
+
+  if (seg.type === "title") {
+    // 緑の背景 ＋ エンブレム ＋ 試合の情報
+    const g = dctx.createLinearGradient(0, 0, 0, DH);
+    g.addColorStop(0, "#2e9e4f");
+    g.addColorStop(1, "#14612a");
+    dctx.fillStyle = g;
+    dctx.fillRect(0, 0, DW, DH);
+    if (emblem) {
+      const s = 220;
+      dctx.save();
+      dctx.beginPath();
+      dctx.arc(DW / 2, 250, s / 2 + 14, 0, Math.PI * 2);
+      dctx.fillStyle = "#fff";
+      dctx.fill();
+      dctx.restore();
+      dctx.drawImage(emblem, DW / 2 - s / 2, 250 - s / 2, s, s);
+    }
+    dctx.fillStyle = "#fff";
+    dctx.font = `bold 40px ${font}`;
+    dctx.fillText(d.dateText, DW / 2, 470);
+    dctx.font = `900 56px ${font}`;
+    dctx.fillText(d.matchName, DW / 2, 550, DW - 80);
+    dctx.font = `bold 40px ${font}`;
+    dctx.fillText(`${d.ourTeam}  vs  ${d.oppTeam}`, DW / 2, 640, DW - 80);
+    dctx.font = `900 34px ${font}`;
+    dctx.fillStyle = "rgba(255,255,255,0.8)";
+    dctx.fillText("MATCH DIGEST", DW / 2, 760);
+    return;
+  }
+
+  if (seg.type === "photo") {
+    // 写真を画面いっぱいに置き、少しずつズームする（動きを出すため）
+    const img = seg.img;
+    const zoom = 1 + 0.08 * (local / seg.dur);
+    const s = Math.max(DW / img.width, DH / img.height) * zoom;
+    const w = img.width * s, h = img.height * s;
+    dctx.fillStyle = "#000";
+    dctx.fillRect(0, 0, DW, DH);
+    dctx.drawImage(img, (DW - w) / 2, (DH - h) / 2, w, h);
+    // 下にスコアの帯
+    const g = dctx.createLinearGradient(0, DH - 200, 0, DH);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, "rgba(0,0,0,0.75)");
+    dctx.fillStyle = g;
+    dctx.fillRect(0, DH - 200, DW, 200);
+    dctx.fillStyle = "#fff";
+    dctx.font = `bold 38px ${font}`;
+    dctx.fillText(`${d.ourTeam}  ${d.our} - ${d.opp}  ${d.oppTeam}`, DW / 2, DH - 60, DW - 60);
+    return;
+  }
+
+  if (seg.type === "end") {
+    // 最後は結果カード（④と同じ画像）
+    dctx.drawImage(canvas, 0, 0, DW, DH);
+  }
+}
+
+// 録画に使える動画の形式を選ぶ（iPhoneはmp4、パソコンのChromeはwebmなど）
+function pickMime() {
+  const list = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+  return list.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+}
+
+async function makeDigest() {
+  if (!digestImgs.length) { showToast("先に写真を選んでください"); return; }
+  if (!window.MediaRecorder) { showToast("このブラウザでは動画を作れません"); return; }
+  update(); // 結果カードを最新にしておく
+
+  const vc = document.createElement("canvas");
+  vc.width = DW;
+  vc.height = DH;
+  const dctx = vc.getContext("2d");
+  const segs = digestSegments();
+  const total = segs.reduce((a, s) => a + s.dur, 0);
+  drawDigestFrame(dctx, segs, 0);
+
+  const mime = pickMime();
+  const stream = vc.captureStream(30);
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 4000000 } : {});
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+
+  $("digestBtn").disabled = true;
+  $("digestSaveBtn").style.display = "none";
+  $("digestVideo").style.display = "none";
+  $("digestProgress").style.display = "block";
+
+  const done = new Promise((resolve) => { rec.onstop = resolve; });
+  rec.start();
+  const t0 = performance.now();
+  await new Promise((resolve) => {
+    function frame() {
+      const t = (performance.now() - t0) / 1000;
+      drawDigestFrame(dctx, segs, Math.min(t, total));
+      $("digestProgress").textContent = `動画を作っています… ${Math.min(100, Math.round((t / total) * 100))}%`;
+      if (t < total) requestAnimationFrame(frame);
+      else resolve();
+    }
+    requestAnimationFrame(frame);
+  });
+  rec.stop();
+  await done;
+
+  digestBlob = new Blob(chunks, { type: rec.mimeType || mime || "video/mp4" });
+  $("digestVideo").src = URL.createObjectURL(digestBlob);
+  $("digestVideo").style.display = "block";
+  $("digestSaveBtn").style.display = "block";
+  $("digestProgress").textContent = "できました！再生して確認してください";
+  $("digestBtn").disabled = false;
+}
+
+// 動画を保存（iPhoneは共有メニュー →「ビデオを保存」）
+async function saveDigest() {
+  if (!digestBlob) return;
+  const ext = digestBlob.type.includes("webm") ? "webm" : "mp4";
+  const file = new File([digestBlob], `digest.${ext}`, { type: digestBlob.type });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); } catch (e) {}
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(digestBlob);
+  a.download = file.name;
+  a.click();
 }
 
 // 最初に：下書きを戻して、記録の一覧と画面を表示する
