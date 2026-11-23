@@ -836,7 +836,7 @@ function showToast(msg) {
 // しくみ：見えないキャンバスに1コマずつ絵を描き、それを録画して動画にする
 const DW = 720, DH = 900;          // 動画の大きさ（縦長 4:5）
 const PHOTO_SEC = 3;               // 写真1枚を見せる秒数
-const TITLE_SEC = 2.5;             // 最初のタイトルの秒数
+const TITLE_SEC = 3.5;             // 最初のタイトルの秒数
 const END_SEC = 4;                 // 最後の結果カードの秒数
 const FADE_SEC = 0.5;              // 切りかわりのフェードの秒数
 const MAX_PHOTOS = 10;
@@ -938,32 +938,7 @@ function drawSegment(dctx, seg, local) {
   dctx.textBaseline = "middle";
 
   if (seg.type === "title") {
-    // 緑の背景 ＋ エンブレム ＋ 試合の情報
-    const g = dctx.createLinearGradient(0, 0, 0, DH);
-    g.addColorStop(0, "#2e9e4f");
-    g.addColorStop(1, "#14612a");
-    dctx.fillStyle = g;
-    dctx.fillRect(0, 0, DW, DH);
-    if (emblem) {
-      const s = 220;
-      dctx.save();
-      dctx.beginPath();
-      dctx.arc(DW / 2, 250, s / 2 + 14, 0, Math.PI * 2);
-      dctx.fillStyle = "#fff";
-      dctx.fill();
-      dctx.restore();
-      dctx.drawImage(emblem, DW / 2 - s / 2, 250 - s / 2, s, s);
-    }
-    dctx.fillStyle = "#fff";
-    dctx.font = `bold 40px ${font}`;
-    dctx.fillText(d.dateText, DW / 2, 470);
-    dctx.font = `900 56px ${font}`;
-    dctx.fillText(d.matchName, DW / 2, 550, DW - 80);
-    dctx.font = `bold 40px ${font}`;
-    dctx.fillText(`${d.ourTeam}  vs  ${d.oppTeam}`, DW / 2, 640, DW - 80);
-    dctx.font = `900 34px ${font}`;
-    dctx.fillStyle = "rgba(255,255,255,0.8)";
-    dctx.fillText("MATCH DIGEST", DW / 2, 760);
+    drawTitle(dctx, local, d, font);
     return;
   }
 
@@ -992,6 +967,143 @@ function drawSegment(dctx, seg, local) {
     // 最後は結果カード（④と同じ画像）
     dctx.drawImage(canvas, 0, 0, DW, DH);
   }
+}
+
+// ===== タイトル画面（スポーツ中継のオープニング風） =====
+// t ＝ タイトルが始まってからの秒数。時間に合わせて、少しずつ部品が入ってくる
+const NAVY = "#0d1a6e", BLUE = "#2433b5", GOLD = "#f5c400";
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+const easeOut = (v) => 1 - Math.pow(1 - clamp01(v), 3);          // 速く入って、ゆっくり止まる
+const easeBack = (v) => {                                          // 少し行き過ぎて戻る（弾む動き）
+  v = clamp01(v);
+  const c = 1.7;
+  return 1 + (c + 1) * Math.pow(v - 1, 3) + c * Math.pow(v - 1, 2);
+};
+
+function drawTitle(x, t, d, F) {
+  const W = DW, H = DH;
+  x.textBaseline = "middle";
+
+  // 1) 背景：紺のグラデーション
+  const bg = x.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, NAVY);
+  bg.addColorStop(1, "#040824");
+  x.fillStyle = bg;
+  x.fillRect(0, 0, W, H);
+
+  // 2) 斜めの帯（左右からスライドしてくる）
+  x.save();
+  x.translate(W / 2, H / 2);
+  x.rotate(-0.38);
+  x.translate(-W / 2, -H / 2);
+  x.fillStyle = BLUE;
+  x.fillRect(-400 - (1 - easeOut(t / 0.7)) * 900, 230, 1600, 230);
+  x.fillStyle = "rgba(255,255,255,0.9)";
+  x.fillRect(-400 + (1 - easeOut((t - 0.15) / 0.7)) * 1200, 470, 1600, 8);
+  x.fillStyle = GOLD;
+  x.fillRect(-400 - (1 - easeOut((t - 0.25) / 0.7)) * 1200, 490, 1600, 16);
+  x.fillStyle = "rgba(255,255,255,0.06)";
+  for (let i = 0; i < 12; i++) x.fillRect(-400, 560 + i * 34, 1600, 12);
+  x.restore();
+
+  // 3) 光の筋が斜めに横切る
+  const sx = -300 + (t / 1.6) * 1500;
+  const lg = x.createLinearGradient(sx - 120, 0, sx + 120, 0);
+  lg.addColorStop(0, "rgba(255,255,255,0)");
+  lg.addColorStop(0.5, "rgba(255,255,255,0.18)");
+  lg.addColorStop(1, "rgba(255,255,255,0)");
+  x.fillStyle = lg;
+  x.fillRect(0, 0, W, H);
+
+  // 4) 左上の「MATCH HIGHLIGHTS」
+  const lt = easeOut((t - 0.2) / 0.5);
+  x.save();
+  x.globalAlpha *= lt;
+  x.translate((1 - lt) * -200, 0);
+  x.fillStyle = GOLD;
+  x.fillRect(40, 54, 8, 52);
+  x.fillStyle = "#fff";
+  x.textAlign = "left";
+  x.font = `italic 900 40px ${F}`;
+  x.fillText("MATCH HIGHLIGHTS", 62, 80);
+  x.restore();
+
+  // 5) エンブレム（弾むように登場。うしろが光る）
+  const es = easeBack((t - 0.3) / 0.6), ea = clamp01((t - 0.3) / 0.3);
+  if (ea > 0 && emblem) {
+    x.save();
+    const cx = W / 2, cy = 330, R = 150 * es;
+    // 光はふわっと出す。エンブレム自体は大きさだけで登場させる（半透明だと白い四角が透けるため）
+    const a0 = x.globalAlpha;
+    x.globalAlpha = a0 * ea;
+    const glow = x.createRadialGradient(cx, cy, 0, cx, cy, 260);
+    glow.addColorStop(0, "rgba(120,150,255,0.55)");
+    glow.addColorStop(1, "rgba(120,150,255,0)");
+    x.fillStyle = glow;
+    x.fillRect(0, 0, W, H);
+    x.globalAlpha = a0;
+    x.beginPath();
+    x.arc(cx, cy, R, 0, Math.PI * 2);
+    x.fillStyle = "#fff";
+    x.fill();
+    x.lineWidth = 8;
+    x.strokeStyle = GOLD;
+    x.stroke();
+    x.beginPath();
+    x.arc(cx, cy, Math.max(0, R - 4), 0, Math.PI * 2);
+    x.clip();                                   // 丸の中だけにエンブレムを描く
+    const s = R * 1.5;
+    x.drawImage(emblem, cx - s / 2, cy - s / 2, s, s);
+    x.restore();
+  }
+
+  // 6) チーム名（自チームは左から、相手は右から）
+  const ta = easeOut((t - 0.8) / 0.5);
+  x.save();
+  x.globalAlpha *= ta;
+  x.fillStyle = "#fff";
+  x.textAlign = "center";
+  x.font = `italic 900 54px ${F}`;
+  x.fillText(d.ourTeam, W / 2 - (1 - ta) * 300, 560, W - 80);
+  x.fillText(d.oppTeam, W / 2 + (1 - ta) * 300, 700, W - 80);
+  x.restore();
+
+  // 7) ゴールドの「VS」
+  const vs = easeBack((t - 1.1) / 0.4);
+  if (vs > 0) {
+    x.save();
+    x.translate(W / 2, 630);
+    x.scale(vs, vs);
+    x.beginPath();
+    x.moveTo(-60, -30); x.lineTo(70, -30); x.lineTo(60, 30); x.lineTo(-70, 30);
+    x.closePath();
+    x.fillStyle = GOLD;
+    x.fill();
+    x.fillStyle = NAVY;
+    x.textAlign = "center";
+    x.font = `italic 900 40px ${F}`;
+    x.fillText("VS", 0, 2);
+    x.restore();
+  }
+
+  // 8) 下の白い帯：「2026.11.23 MON | 大会名」
+  const ba = easeOut((t - 1.3) / 0.5);
+  x.save();
+  x.globalAlpha *= ba;
+  x.translate((1 - ba) * 400, 0);
+  x.beginPath();
+  x.moveTo(90, 790); x.lineTo(W - 60, 790); x.lineTo(W - 90, 850); x.lineTo(60, 850);
+  x.closePath();
+  x.fillStyle = "#fff";
+  x.fill();
+  const dt = new Date(($("date").value || new Date().toLocaleDateString("sv-SE")) + "T00:00:00");
+  const wk = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][dt.getDay()];
+  const ds = `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")} ${wk}`;
+  x.fillStyle = NAVY;
+  x.textAlign = "center";
+  x.font = `italic 900 30px ${F}`;
+  x.fillText(`${ds}  |  ${d.matchName}`, W / 2, 821, W - 200);
+  x.restore();
 }
 
 // 録画に使える動画の形式を選ぶ（iPhoneはmp4、パソコンのChromeはwebmなど）
