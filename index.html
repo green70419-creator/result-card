@@ -58,7 +58,16 @@
   }
   textarea { min-height: 80px; resize: vertical; }
   .row { display: flex; gap: 8px; align-items: center; }
-  .row > * { flex: 1; }
+  .row > * { flex: 1; min-width: 0; }  /* 横に並べた欄がはみ出さないように */
+  /* iPhoneの日付欄は、そのままだと幅が広がってはみ出すので整える */
+  input[type="date"] {
+    display: block;
+    min-width: 0;
+    min-height: 44px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input[type="date"]::-webkit-date-and-time-value { text-align: left; }
   /* スコアボード */
   .scoreboard { display: flex; align-items: flex-start; gap: 8px; }
   .scoreboard .side { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -119,16 +128,12 @@
   <!-- ===== 1. 入力 ===== -->
   <section>
     <h2>① 試合の情報</h2>
-    <div class="row">
-      <div>
-        <label for="date">日付</label>
-        <input type="date" id="date">
-      </div>
-      <div>
-        <label for="matchName">試合名</label>
-        <input type="text" id="matchName" placeholder="練習試合">
-      </div>
-    </div>
+    <!-- 日付と試合名は、iPhoneで重ならないように1行ずつ並べる -->
+    <label for="date">日付</label>
+    <input type="date" id="date">
+
+    <label for="matchName">試合名</label>
+    <input type="text" id="matchName" placeholder="練習試合">
 
     <div class="row">
       <div>
