@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>試合結果カード</title>
+<!-- iPhoneの「ホーム画面に追加」用の設定 -->
+<meta name="apple-mobile-web-app-capable" content="yes">         <!-- アドレスバーなしの全画面で開く -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="試合結果">        <!-- アイコンの下に出る名前 -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#1a7f37">
+<link rel="apple-touch-icon" href="icon.png">                      <!-- ホーム画面のアイコン -->
+<link rel="icon" href="icon.png">
+<style>
+  /* ===== 見た目の設定 ===== */
+  :root {
+    --main: #1a7f37;      /* メインの緑 */
+    --bg: #f4f6f4;        /* 背景 */
+    --card: #ffffff;      /* 入力欄の背景 */
+    --text: #1d1d1f;
+    --sub: #6e6e73;
+    --line: #d9dcd9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    font-size: 16px;
+  }
+  header {
+    background: var(--main);
+    color: #fff;
+    padding: 14px 16px;
+    font-size: 18px;
+    font-weight: bold;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 16px; }
+  section {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  h2 { font-size: 15px; margin: 0 0 12px; color: var(--main); }
+  label { display: block; font-size: 13px; color: var(--sub); margin: 10px 0 4px; }
+  input, textarea, select {
+    width: 100%;
+    font-size: 16px;   /* 16px以上にするとiPhoneで勝手にズームしない */
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+    font-family: inherit;
+  }
+  textarea { min-height: 80px; resize: vertical; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  /* スコアボード */
+  .scoreboard { display: flex; align-items: flex-start; gap: 8px; }
+  .scoreboard .side { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .scoreboard .tname {
+    text-align: center; font-size: 13px; color: var(--sub);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .scoreboard .num { text-align: center; font-size: 56px; font-weight: 900; line-height: 1; }
+  .scoreboard .dash { font-size: 40px; font-weight: bold; padding-top: 22px; }
+  button.lose { background: #3a6fd8; }
+  button.danger { background: #b3261e; margin-bottom: 4px; }
+  .scorer { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  /* 背番号ボタン */
+  #numButtons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  #numButtons button { min-width: 56px; font-size: 20px; padding: 10px 8px; }
+  #numButtons button small { display: block; font-size: 10px; font-weight: normal; }
+  /* 得点者・選手の一覧の1行 */
+  .item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 0; border-bottom: 1px solid var(--line);
+  }
+  .item span { flex: 1; }
+  .item button { flex: 0 0 40px; height: 36px; padding: 0; }
+  details { margin-top: 16px; }
+  summary { color: var(--main); font-weight: bold; font-size: 14px; padding: 6px 0; cursor: pointer; }
+  details .scorer { margin-top: 10px; }
+  .scorer input.min { flex: 0 0 64px; text-align: center; }
+  .scorer input.name { flex: 1; }
+  .scorer button { flex: 0 0 40px; }
+  button {
+    font-size: 16px;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    background: var(--main);
+    color: #fff;
+    font-weight: bold;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  button.sub { background: #e8efe9; color: var(--main); }
+  button.del { background: #f1e4e4; color: #b3261e; padding: 0; }
+  .big { width: 100%; margin-top: 8px; }
+  #cardImg { width: 100%; border-radius: 8px; display: block; background: #ddd; }
+  #postText { min-height: 220px; font-size: 15px; }
+  .note { font-size: 13px; color: var(--sub); margin: 8px 0 0; line-height: 1.6; }
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: rgba(0,0,0,.8); color: #fff; padding: 10px 18px;
+    border-radius: 20px; font-size: 14px; display: none;
+  }
+</style>
+</head>
+<body>
+<header>⚽ 試合結果カード</header>
+
+<main>
+  <!-- ===== 1. 入力 ===== -->
+  <section>
+    <h2>① 試合の情報</h2>
+    <div class="row">
+      <div>
+        <label for="date">日付</label>
+        <input type="date" id="date">
+      </div>
+      <div>
+        <label for="matchName">試合名</label>
+        <input type="text" id="matchName" placeholder="練習試合">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="ourTeam">自チーム</label>
+        <input type="text" id="ourTeam" placeholder="吹田クラブ">
+      </div>
+      <div>
+        <label for="oppTeam">相手チーム</label>
+        <input type="text" id="oppTeam" placeholder="△△SC">
+      </div>
+    </div>
+
+    <label>スコア</label>
+    <div class="scoreboard">
+      <div class="side">
+        <div class="tname" id="ourNameView">吹田クラブ</div>
+        <div class="num" id="ourScoreView">0</div>
+        <button onclick="changeScore('our', 1)">＋得点</button>
+        <button class="sub" onclick="changeScore('our', -1)">−1</button>
+      </div>
+      <div class="dash">−</div>
+      <div class="side">
+        <div class="tname" id="oppNameView">相手チーム</div>
+        <div class="num" id="oppScoreView">0</div>
+        <button class="lose" onclick="changeScore('opp', 1)">＋失点</button>
+        <button class="sub" onclick="changeScore('opp', -1)">−1</button>
+      </div>
+    </div>
+    <p class="note">背番号ボタン（②）をタップしても、自チームの点が＋1されます。</p>
+  </section>
+
+  <section>
+    <h2>② 得点者</h2>
+    <p class="note" style="margin:0 0 8px">点を取った子の背番号をタップ（2点なら2回）</p>
+    <div id="numButtons"></div>
+    <div id="goalList"></div>
+
+    <!-- 選手登録（最初の1回だけ。ふだんは閉じておく） -->
+    <details id="rosterBox">
+      <summary>選手登録（背番号と名前）</summary>
+      <div id="rosterList"></div>
+      <div class="scorer">
+        <input class="min" type="number" id="newNum" inputmode="numeric" placeholder="番号">
+        <input class="name" type="text" id="newName" placeholder="名前（例：○○くん）">
+        <button onclick="addPlayer()" style="flex:0 0 64px">登録</button>
+      </div>
+    </details>
+  </section>
+
+  <section>
+    <h2>③ コメント・写真</h2>
+    <label for="comment">コメント（結果から自動で作られます。書き直してもOK）</label>
+    <textarea id="comment"></textarea>
+    <button class="sub big" onclick="resetComment()">自動の文章に戻す</button>
+
+    <label for="photo">写真（1枚）</label>
+    <input type="file" id="photo" accept="image/*">
+  </section>
+
+  <!-- ===== 2. できあがり ===== -->
+  <section>
+    <h2>④ 結果カード画像</h2>
+    <img id="cardImg" alt="結果カード">
+    <button class="big" onclick="saveImage()">画像を保存する</button>
+    <p class="note">うまく保存できないときは、画像を<b>長押し</b>して「"写真"に保存」を選んでください。</p>
+  </section>
+
+  <section>
+    <h2>⑤ 投稿用の文章</h2>
+    <textarea id="postText" readonly></textarea>
+    <button class="big" onclick="copyText()">文章をコピーする</button>
+    <p class="note">BANDで新しく投稿 → 文章を貼り付け → カード画像を添付すれば完成です。</p>
+  </section>
+
+  <button class="big danger" onclick="resetMatch()">🔄 リセット（次の試合へ）</button>
+  <p class="note" style="text-align:center">自チーム名と選手名簿は残ります</p>
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ===== 準備 =====
+const $ = (id) => document.getElementById(id);
+const canvas = document.createElement("canvas"); // 画像を描くための見えないキャンバス
+canvas.width = 1080;   // BANDで見やすい縦長（4:5）
+canvas.height = 1350;
+const ctx = canvas.getContext("2d");
+let photo = null;      // 選んだ写真
+
+// 今日の日付を最初から入れておく
+$("date").value = new Date().toLocaleDateString("sv-SE"); // 「2026-11-23」の形
+
+// 自チーム名はスマホに覚えさせておく（毎回入力しなくていいように）
+// 何も保存されていないときは「吹田クラブ」を入れておく
+$("ourTeam").value = "吹田クラブ";
+try { $("ourTeam").value = localStorage.getItem("ourTeam") || "吹田クラブ"; } catch (e) {}
+
+// コメントを手で直したかどうか（直したら、自動で上書きしない）
+let commentEdited = false;
+$("comment").addEventListener("input", () => { commentEdited = true; });
+
+function resetComment() {
+  commentEdited = false;
+  update();
+  showToast("自動の文章に戻しました");
+}
+
+// 入力が変わるたびに、カードと文章を作り直す
+document.querySelectorAll("input, textarea").forEach((el) => {
+  el.addEventListener("input", update);
+});
+
+// ===== 選手登録 =====
+// roster（ロスター）＝ 選手名簿。[{num:"10", name:"○○くん"}, ...] の形でiPhoneに保存する
+let roster = [];
+try { roster = JSON.parse(localStorage.getItem("roster")) || []; } catch (e) {}
+
+// goals ＝ この試合で点を取った子の背番号を、取った順に並べたもの（例：["10","7","10"]）
+let goals = [];
+
+function saveRoster() {
+  roster.sort((a, b) => Number(a.num) - Number(b.num)); // 背番号の小さい順
+  try { localStorage.setItem("roster", JSON.stringify(roster)); } catch (e) {}
+}
+
+function addPlayer() {
+  const num = $("newNum").value.trim();
+  const name = $("newName").value.trim();
+  if (!num || !name) { showToast("番号と名前を入れてください"); return; }
+  roster = roster.filter((p) => p.num !== num); // 同じ番号があれば上書き
+  roster.push({ num, name });
+  saveRoster();
+  $("newNum").value = "";
+  $("newName").value = "";
+  $("newNum").focus();
+  renderPlayers();
+}
+
+function removePlayer(num) {
+  roster = roster.filter((p) => p.num !== num);
+  saveRoster();
+  renderPlayers();
+}
+
+// 背番号から名前を探す
+function nameOf(num) {
+  const p = roster.find((p) => p.num === num);
+  return p ? p.name : "";
+}
+
+// ===== スコア =====
+let ourScore = 0; // 自チームの点
+let oppScore = 0; // 相手の点
+
+function changeScore(side, n) {
+  if (side === "our") {
+    // 得点者が登録されている点より少なくはできない（得点者の✕で消してもらう）
+    if (n < 0 && ourScore <= goals.length) {
+      if (goals.length) showToast("得点者の ✕ で消してください");
+      return;
+    }
+    ourScore = Math.max(0, ourScore + n);
+  } else {
+    oppScore = Math.max(0, oppScore + n);
+  }
+  update();
+}
+
+// ===== 得点者 =====
+// 背番号をタップ → 得点者に追加して、自チームの点も＋1
+function addGoal(num) { goals.push(num); ourScore++; renderPlayers(); }
+
+function removeGoal(num) {
+  const i = goals.lastIndexOf(num); // 1点ぶんだけ消す
+  if (i >= 0) { goals.splice(i, 1); ourScore = Math.max(0, ourScore - 1); }
+  renderPlayers();
+}
+
+// ===== リセット（次の試合へ） =====
+function resetMatch() {
+  if (!confirm("次の試合の準備をしますか？\n（スコア・得点者・コメント・写真が消えます）")) return;
+  $("date").value = new Date().toLocaleDateString("sv-SE");
+  $("matchName").value = "";
+  $("oppTeam").value = "";
+  ourScore = 0;
+  oppScore = 0;
+  goals = [];
+  $("comment").value = "";
+  commentEdited = false;
+  photo = null;
+  $("photo").value = "";
+  renderPlayers();
+  window.scrollTo(0, 0);
+  showToast("リセットしました");
+}
+
+// 得点者をまとめる（同じ子の点は「×2」にする）
+function getScorers() {
+  const list = [];
+  goals.forEach((num) => {
+    const found = list.find((s) => s.num === num);
+    if (found) found.count++;
+    else list.push({ num, name: nameOf(num), count: 1 });
+  });
+  return list;
+}
+
+// 「#10 ○○くん ×2」の形の文字にする
+function scorerLabel(s, withNum) {
+  let t = withNum ? `#${s.num} ${s.name}` : s.name || `#${s.num}`;
+  if (s.count > 1) t += ` ×${s.count}`;
+  return t;
+}
+
+// 背番号ボタン・得点者一覧・選手名簿を画面に表示し直す
+function renderPlayers() {
+  // 背番号ボタン
+  $("numButtons").innerHTML = "";
+  roster.forEach((p) => {
+    const b = document.createElement("button");
+    b.innerHTML = `${p.num}<small></small>`;
+    b.querySelector("small").textContent = p.name;
+    b.onclick = () => addGoal(p.num);
+    $("numButtons").appendChild(b);
+  });
+  if (!roster.length) {
+    $("numButtons").innerHTML = '<p class="note" style="margin:0">まず下の「選手登録」から背番号と名前を登録してください。</p>';
+    $("rosterBox").open = true;
+  }
+
+  // 得点者一覧
+  $("goalList").innerHTML = "";
+  getScorers().forEach((s) => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `<span></span><button class="del" title="1点消す">✕</button>`;
+    div.querySelector("span").textContent = "⚽ " + scorerLabel(s, true);
+    div.querySelector("button").onclick = () => removeGoal(s.num);
+    $("goalList").appendChild(div);
+  });
+
+  // 選手名簿
+  $("rosterList").innerHTML = "";
+  roster.forEach((p) => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `<span></span><button class="del" title="名簿から消す">✕</button>`;
+    div.querySelector("span").textContent = `#${p.num} ${p.name}`;
+    div.querySelector("button").onclick = () => {
+      if (confirm(`#${p.num} ${p.name} を名簿から消しますか？`)) removePlayer(p.num);
+    };
+    $("rosterList").appendChild(div);
+  });
+
+  update();
+}
+
+// ===== 写真を読みこむ =====
+$("photo").addEventListener("change", () => {
+  const file = $("photo").files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => { photo = img; update(); };
+  img.src = URL.createObjectURL(file);
+});
+
+// ===== 入力内容をまとめる =====
+function getData() {
+  const our = ourScore;
+  const opp = oppScore;
+  let result = "引き分け", resultEn = "DRAW", color = "#8e8e93";
+  if (our > opp) { result = "勝ち"; resultEn = "WIN"; color = "#e8a400"; }
+  if (our < opp) { result = "負け"; resultEn = "LOSE"; color = "#3a6fd8"; }
+
+  // 日付を「11/23（日）」の形にする
+  let dateText = "";
+  if ($("date").value) {
+    const d = new Date($("date").value + "T00:00:00");
+    const week = "日月火水木金土"[d.getDay()];
+    dateText = `${d.getMonth() + 1}/${d.getDate()}（${week}）`;
+  }
+
+  return {
+    dateText,
+    matchName: $("matchName").value.trim() || "試合",
+    ourTeam: $("ourTeam").value.trim() || "吹田クラブ",
+    oppTeam: $("oppTeam").value.trim() || "相手チーム",
+    our, opp, result, resultEn, color,
+    scorers: getScorers(),
+    comment: $("comment").value.trim(),
+  };
+}
+
+// ===== 全部を作り直す =====
+function update() {
+  try { localStorage.setItem("ourTeam", $("ourTeam").value); } catch (e) {}
+  // 手で直していなければ、コメントを結果から自動で書く
+  if (!commentEdited) {
+    $("comment").value = autoComment(getData());
+  }
+  const data = getData();
+  // スコアボードの表示を更新
+  $("ourScoreView").textContent = data.our;
+  $("oppScoreView").textContent = data.opp;
+  $("ourNameView").textContent = data.ourTeam;
+  $("oppNameView").textContent = data.oppTeam;
+  drawCard(data);
+  $("postText").value = makeText(data);
+}
+
+// ===== 投稿用の文章を作る =====
+function makeText(d) {
+  let t = `⚽ ${d.dateText} ${d.matchName} 結果\n`;
+  t += `${d.ourTeam} ${d.our} - ${d.opp} ${d.oppTeam}（${d.result}）\n`;
+  if (d.scorers.length) {
+    t += `\n【得点】\n`;
+    d.scorers.forEach((s) => {
+      t += scorerLabel(s, true) + "\n";
+    });
+  }
+  if (d.comment) t += `\n【コメント】\n${d.comment}\n`;
+  return t;
+}
+
+// ===== コメントを自動で作る =====
+function autoComment(d) {
+  const diff = d.our - d.opp;
+  const score = `${d.our}-${d.opp}`;
+  let t;
+
+  // 1文目：結果
+  if (diff >= 3)      t = `${d.ourTeam}は${d.oppTeam}に${score}で快勝しました！`;
+  else if (diff === 1) t = `${d.ourTeam}は${d.oppTeam}に${score}で接戦を制しました！`;
+  else if (diff > 0)  t = `${d.ourTeam}は${d.oppTeam}に${score}で勝利しました！`;
+  else if (diff === 0 && d.our === 0) t = `${d.oppTeam}と0-0、両チーム譲らない試合でした。`;
+  else if (diff === 0) t = `${d.oppTeam}と${score}の引き分けでした。`;
+  else                t = `${d.oppTeam}に${score}で惜しくも敗れました。次につなげよう！`;
+
+  // 2文目：得点者（いちばん多く点を取った子を紹介）
+  if (d.scorers.length) {
+    const top = d.scorers.reduce((a, b) => (b.count > a.count ? b : a));
+    let who = `#${top.num} ${top.name}の` + (top.count > 1 ? `${top.count}ゴール` : "ゴール");
+    if (d.scorers.length > 1) who += "など";
+    if (diff > 0)        t += `\n${who}、みんなでつかんだ勝利です！`;
+    else if (diff === 0) t += `\n${who}、最後まで粘り強く戦いました！`;
+    else                 t += `\n${who}、最後まで意地を見せてくれました！`;
+  }
+  return t;
+}
+
+// ===== カード画像を描く =====
+function drawCard(d) {
+  const W = canvas.width, H = canvas.height;
+  const font = '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif';
+
+  // 1) 背景：写真があれば写真、なければ芝生っぽい緑
+  if (photo) {
+    // 写真を枠いっぱいに、はみ出た分を切って中央に置く
+    const scale = Math.max(W / photo.width, H / photo.height);
+    const w = photo.width * scale, h = photo.height * scale;
+    ctx.drawImage(photo, (W - w) / 2, (H - h) / 2, w, h);
+  } else {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#2e9e4f");
+    g.addColorStop(1, "#14612a");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    // 芝のしま模様
+    ctx.fillStyle = "rgba(255,255,255,0.05)";
+    for (let y = 0; y < H; y += 180) ctx.fillRect(0, y, W, 90);
+  }
+
+  // 2) 文字を読みやすくするため、上と下を暗くする
+  let g = ctx.createLinearGradient(0, 0, 0, 260);
+  g.addColorStop(0, "rgba(0,0,0,0.6)");
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, 260);
+
+  g = ctx.createLinearGradient(0, H - 640, 0, H);
+  g.addColorStop(0, "rgba(0,0,0,0)");
+  g.addColorStop(0.35, "rgba(0,0,0,0.65)");
+  g.addColorStop(1, "rgba(0,0,0,0.85)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, H - 640, W, 640);
+
+  ctx.fillStyle = "#fff";
+  ctx.textBaseline = "middle";
+
+  // 3) 上：日付と試合名
+  ctx.textAlign = "left";
+  ctx.font = `bold 44px ${font}`;
+  fitText(`${d.dateText}  ${d.matchName}`, 60, 90, W - 120, 44, font);
+
+  // 4) 結果バッジ（WIN / DRAW / LOSE）
+  const badgeY = H - 500;
+  ctx.font = `900 56px ${font}`;
+  const bw = ctx.measureText(d.resultEn).width + 80;
+  ctx.fillStyle = d.color;
+  roundRect((W - bw) / 2, badgeY - 45, bw, 90, 45);
+  ctx.fillStyle = "#fff";
+  ctx.textAlign = "center";
+  ctx.fillText(d.resultEn, W / 2, badgeY + 3);
+
+  // 5) スコア（大きく）
+  ctx.font = `900 220px ${font}`;
+  ctx.fillText(`${d.our} - ${d.opp}`, W / 2, H - 320);
+
+  // 6) チーム名（スコアの下、左右）
+  ctx.font = `bold 46px ${font}`;
+  fitText(d.ourTeam, W / 4, H - 175, W / 2 - 60, 46, font);
+  fitText(d.oppTeam, (W * 3) / 4, H - 175, W / 2 - 60, 46, font);
+  ctx.font = `bold 36px ${font}`;
+  ctx.fillText("vs", W / 2, H - 175);
+
+  // 7) 得点者（いちばん下に1行で）
+  if (d.scorers.length) {
+    const names = d.scorers.map((s) => scorerLabel(s, false)).join("・");
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    fitText(`⚽ ${names}`, W / 2, H - 85, W - 120, 36, font);
+  }
+
+  // できた画像を画面に表示（長押しで保存できるように <img> にする）
+  $("cardImg").src = canvas.toDataURL("image/jpeg", 0.9);
+}
+
+// 文字が長すぎるときは小さくして枠に収める
+function fitText(text, x, y, maxWidth, size, font) {
+  const weight = ctx.font.split(" ")[0];
+  let s = size;
+  ctx.font = `${weight} ${s}px ${font}`;
+  while (ctx.measureText(text).width > maxWidth && s > 20) {
+    s -= 2;
+    ctx.font = `${weight} ${s}px ${font}`;
+  }
+  ctx.fillText(text, x, y);
+}
+
+// 角の丸い四角を描く
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// ===== 画像を保存する =====
+function saveImage() {
+  canvas.toBlob(async (blob) => {
+    const file = new File([blob], "result.jpg", { type: "image/jpeg" });
+    // iPhoneでは「共有」メニューを出す → 「画像を保存」でカメラロールへ
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); } catch (e) {}
+      return;
+    }
+    // パソコンではそのままダウンロード
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "result.jpg";
+    a.click();
+  }, "image/jpeg", 0.9);
+}
+
+// ===== 文章をコピーする =====
+async function copyText() {
+  const text = $("postText").value;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    // 古い方法（うまくいかない環境向け）
+    $("postText").select();
+    document.execCommand("copy");
+  }
+  showToast("コピーしました！BANDに貼り付けてください");
+}
+
+function showToast(msg) {
+  $("toast").textContent = msg;
+  $("toast").style.display = "block";
+  setTimeout(() => ($("toast").style.display = "none"), 2500);
+}
+
+// 最初に1回描いておく
+renderPlayers();
+</script>
+</body>
+</html>
