@@ -241,7 +241,7 @@
     <div id="digestProgress" class="note" style="display:none"></div>
     <video id="digestVideo" controls playsinline style="display:none"></video>
     <button class="big" id="digestSaveBtn" onclick="saveDigest()" style="display:none">動画を保存する</button>
-    <p class="note">作っている間は、画面を閉じたりほかのアプリに切りかえたりしないでください。オープニングの音が鳴ります（マナーモードだと聞こえないことがあります）。</p>
+    <p class="note">作っている間は、画面を閉じたりほかのアプリに切りかえたりしないでください。オープニングには音が入ります（再生するときは、マナーモードを解除してください）。</p>
   </section>
 
   <button class="big" id="saveBtn" onclick="saveMatch()">💾 この試合を保存</button>
@@ -1290,7 +1290,8 @@ function pickMime() {
   return list.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
 }
 
-async function makeDigest() {
+// 録画で作る方式（古いiPhoneなど、下の「1コマずつ作る方式」が使えないときだけ使う）
+async function makeDigestRecorder() {
   if (digestLoading) { showToast("写真を読みこみ中です。少し待ってください"); return; }
   if (!digestImgs.length) { showToast("先に写真を選んでください"); return; }
   if (!window.MediaRecorder) { showToast("このブラウザでは動画を作れません"); return; }
@@ -1356,6 +1357,229 @@ async function makeDigest() {
   $("digestSaveBtn").style.display = "block";
   $("digestProgress").textContent = "できました！再生して確認してください";
   $("digestBtn").disabled = false;
+}
+
+// ===== 動画を「1コマずつ」作る方式 =====
+// 録画ではなく、1コマごとに正確な時間をつけて動画を組み立てる。
+// こうすると、早送りになったり、巻き戻せなくなったりしない。録画より速く作れる。
+const FPS = 30;
+
+async function makeDigest() {
+  if (digestLoading) { showToast("写真を読みこみ中です。少し待ってください"); return; }
+  if (!digestImgs.length) { showToast("先に写真を選んでください"); return; }
+  const vcodec = await pickVideoCodec();
+  if (!vcodec) return makeDigestRecorder(); // この機能がない機種は、録画の方式で作る
+  update(); // 結果カードを最新にしておく
+
+  $("digestBtn").disabled = true;
+  $("digestSaveBtn").style.display = "none";
+  $("digestVideo").style.display = "none";
+  $("digestProgress").style.display = "block";
+  $("digestProgress").textContent = "動画を作っています… 0%";
+
+  try {
+    const segs = digestSegments();
+    const total = segs.reduce((a, s) => a + s.dur, 0);
+    const frames = Math.round(total * FPS);
+
+    // --- 映像：1コマずつ描いて、動画の形（H.264）に変換する ---
+    const vc = document.createElement("canvas");
+    vc.width = DW;
+    vc.height = DH;
+    const dctx = vc.getContext("2d");
+    const video = { chunks: [], config: null };
+    const venc = new VideoEncoder({
+      output: (chunk, meta) => {
+        const data = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(data);
+        video.chunks.push({ data, key: chunk.type === "key" });
+        if (meta && meta.decoderConfig && meta.decoderConfig.description) {
+          video.config = new Uint8Array(meta.decoderConfig.description);
+        }
+      },
+      error: (e) => { throw e; },
+    });
+    venc.configure({ codec: vcodec, width: DW, height: DH, bitrate: 2500000, framerate: FPS, avc: { format: "avc" } });
+    for (let i = 0; i < frames; i++) {
+      drawDigestFrame(dctx, segs, i / FPS);
+      const vf = new VideoFrame(vc, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
+      venc.encode(vf, { keyFrame: i % (FPS * 2) === 0 }); // 2秒ごとに区切りのコマを入れる
+      vf.close();
+      // 変換が追いつくのを待つ（iPhoneのメモリを使いすぎないように）
+      while (venc.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 1));
+      if (i % 10 === 0) {
+        $("digestProgress").textContent = `動画を作っています… ${Math.round((i / frames) * 90)}%`;
+        await new Promise((r) => setTimeout(r, 0)); // 画面の表示を更新する
+      }
+    }
+    await venc.flush();
+    venc.close();
+
+    // --- 音：オープニングの音を作って、AAC形式に変換する ---
+    $("digestProgress").textContent = "音を入れています… 95%";
+    const audio = await encodeIntroAudio(total);
+
+    // --- 映像と音を、1つのmp4ファイルにまとめる ---
+    const mp4 = buildMp4(video, audio, frames);
+    digestBlob = new Blob([mp4], { type: "video/mp4" });
+    const v = $("digestVideo");
+    v.src = URL.createObjectURL(digestBlob);
+    v.style.display = "block";
+    $("digestSaveBtn").style.display = "block";
+    $("digestProgress").textContent = audio
+      ? "できました！再生して確認してください"
+      : "できました！（この機種では音を入れられませんでした）";
+  } catch (e) {
+    console.error(e);
+    $("digestProgress").textContent = "うまく作れませんでした。写真の枚数を減らして、もう一度ためしてください";
+  }
+  $("digestBtn").disabled = false;
+}
+
+// この機種で使える、H.264（いちばん一般的な動画の形式）の種類を探す
+async function pickVideoCodec() {
+  if (!window.VideoEncoder || !window.VideoFrame) return null;
+  for (const codec of ["avc1.42002a", "avc1.4d002a", "avc1.64002a"]) {
+    try {
+      const r = await VideoEncoder.isConfigSupported({ codec, width: DW, height: DH, bitrate: 2500000, framerate: FPS, avc: { format: "avc" } });
+      if (r.supported) return codec;
+    } catch (e) {}
+  }
+  return null;
+}
+
+// オープニングの音を、スピーカーに流さずに作って、AAC（mp4の音の形式）に変換する
+async function encodeIntroAudio(total) {
+  const SR = 48000, CH = 2;
+  if (!window.AudioEncoder || !window.OfflineAudioContext || !window.AudioData) return null;
+  try {
+    const cfg = { codec: "mp4a.40.2", sampleRate: SR, numberOfChannels: CH, bitrate: 128000 };
+    if (!(await AudioEncoder.isConfigSupported(cfg)).supported) return null;
+    const oac = new OfflineAudioContext(CH, Math.ceil(SR * total), SR);
+    playIntroSound(oac, oac.destination, 0);
+    const buf = await oac.startRendering();
+
+    const audio = { chunks: [], config: null, sampleRate: SR, channels: CH };
+    const aenc = new AudioEncoder({
+      output: (chunk, meta) => {
+        const data = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(data);
+        audio.chunks.push({ data });
+        if (meta && meta.decoderConfig && meta.decoderConfig.description) {
+          audio.config = new Uint8Array(meta.decoderConfig.description);
+        }
+      },
+      error: (e) => { throw e; },
+    });
+    aenc.configure(cfg);
+    const L = buf.getChannelData(0), R = buf.getChannelData(1);
+    const STEP = 4800;
+    for (let s = 0; s < buf.length; s += STEP) {
+      const n = Math.min(STEP, buf.length - s);
+      const data = new Float32Array(n * CH);
+      data.set(L.subarray(s, s + n), 0);
+      data.set(R.subarray(s, s + n), n);
+      const ad = new AudioData({ format: "f32-planar", sampleRate: SR, numberOfFrames: n, numberOfChannels: CH, timestamp: Math.round((s * 1e6) / SR), data });
+      aenc.encode(ad);
+      ad.close();
+    }
+    await aenc.flush();
+    aenc.close();
+    if (!audio.config) audio.config = new Uint8Array([0x11, 0x90]); // 「AAC・48kHz・ステレオ」という目印
+    return audio.chunks.length ? audio : null;
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+
+// ===== mp4ファイルを組み立てる =====
+// mp4は「箱（box）」を入れ子にした形のファイル。箱ごとに、中身の大きさ＋4文字の名前＋中身を並べる
+function buildMp4(video, audio, frames) {
+  const VTS = 90000;                     // 映像の時間の単位（1秒＝90000）
+  const fdur = VTS / FPS;                // 1コマの長さ
+  const durSec = frames / FPS;
+
+  // 小さな道具：数字やバイトの並びを作る
+  const u8 = (n) => [n & 255];
+  const u16 = (n) => [(n >> 8) & 255, n & 255];
+  const u32 = (n) => [(n >>> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const str = (s) => [...s].map((c) => c.charCodeAt(0));
+  const zeros = (n) => new Array(n).fill(0);
+  const flat = (parts) => {
+    const len = parts.reduce((a, p) => a + p.length, 0);
+    const out = new Uint8Array(len);
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  };
+  const box = (type, ...parts) => {
+    const body = flat(parts.map((p) => (p instanceof Uint8Array ? p : new Uint8Array(p))));
+    return flat([new Uint8Array([...u32(body.length + 8), ...str(type)]), body]);
+  };
+  const full = (type, version, flags, ...parts) => box(type, [version, ...u32(flags).slice(1)], ...parts);
+  const matrix = [...u32(0x10000), ...u32(0), ...u32(0), ...u32(0), ...u32(0x10000), ...u32(0), ...u32(0), ...u32(0), ...u32(0x40000000)];
+
+  const vData = flat(video.chunks.map((c) => c.data));
+  const aData = audio ? flat(audio.chunks.map((c) => c.data)) : new Uint8Array(0);
+
+  // 1本のトラック（映像または音）の箱を作る
+  const trak = (o) => box("trak",
+    full("tkhd", 0, 3, u32(0), u32(0), u32(o.id), u32(0), u32(Math.round(durSec * 1000)), zeros(8),
+      u16(0), u16(0), u16(o.isVideo ? 0 : 0x100), u16(0), matrix,
+      u32(o.isVideo ? DW << 16 : 0), u32(o.isVideo ? DH << 16 : 0)),
+    box("mdia",
+      full("mdhd", 0, 0, u32(0), u32(0), u32(o.timescale), u32(o.duration), u16(0x55c4), u16(0)),
+      full("hdlr", 0, 0, u32(0), str(o.isVideo ? "vide" : "soun"), zeros(12), str(o.isVideo ? "VideoHandler" : "SoundHandler"), [0]),
+      box("minf",
+        o.isVideo ? full("vmhd", 0, 1, zeros(8)) : full("smhd", 0, 0, zeros(4)),
+        box("dinf", full("dref", 0, 0, u32(1), full("url ", 0, 1))),
+        box("stbl",
+          full("stsd", 0, 0, u32(1), o.sampleEntry),
+          full("stts", 0, 0, u32(1), u32(o.sizes.length), u32(o.sampleDur)),
+          ...(o.keys ? [full("stss", 0, 0, u32(o.keys.length), ...o.keys.map((k) => u32(k)))] : []),
+          full("stsc", 0, 0, u32(1), u32(1), u32(o.sizes.length), u32(1)),
+          full("stsz", 0, 0, u32(0), u32(o.sizes.length), ...o.sizes.map((s) => u32(s))),
+          full("stco", 0, 0, u32(1), u32(o.offset))))));
+
+  // 映像の説明（H.264）
+  const avc1 = box("avc1", zeros(6), u16(1), zeros(16), u16(DW), u16(DH),
+    u32(0x480000), u32(0x480000), u32(0), u16(1), zeros(32), u16(0x18), u16(0xffff),
+    box("avcC", video.config));
+  // 音の説明（AAC）
+  const mp4a = audio && (() => {
+    const asc = [...audio.config];
+    const dsi = [0x05, asc.length, ...asc];
+    const dcd = [0x04, 13 + dsi.length, 0x40, 0x15, 0, 0, 0, ...u32(128000), ...u32(128000), ...dsi];
+    const esd = [0x03, 3 + dcd.length + 3, ...u16(0), 0, ...dcd, 0x06, 1, 0x02];
+    return box("mp4a", zeros(6), u16(1), zeros(8), u16(audio.channels), u16(16), u16(0), u16(0),
+      u32(audio.sampleRate << 16), full("esds", 0, 0, esd));
+  })();
+
+  // moovの大きさを先に知るため、仮の場所で一度作ってから、本当の場所で作り直す
+  const makeMoov = (vOff, aOff) => {
+    const keys = [];
+    video.chunks.forEach((c, i) => { if (c.key) keys.push(i + 1); });
+    const tracks = [trak({
+      id: 1, isVideo: true, timescale: VTS, duration: frames * fdur, sampleDur: fdur,
+      sizes: video.chunks.map((c) => c.data.length), keys, offset: vOff, sampleEntry: avc1,
+    })];
+    if (audio) tracks.push(trak({
+      id: 2, isVideo: false, timescale: audio.sampleRate, duration: audio.chunks.length * 1024, sampleDur: 1024,
+      sizes: audio.chunks.map((c) => c.data.length), keys: null, offset: aOff, sampleEntry: mp4a,
+    }));
+    return box("moov",
+      full("mvhd", 0, 0, u32(0), u32(0), u32(1000), u32(Math.round(durSec * 1000)), u32(0x10000), u16(0x100),
+        zeros(10), matrix, zeros(24), u32(audio ? 3 : 2)),
+      ...tracks);
+  };
+  const ftyp = box("ftyp", str("isom"), u32(512), str("isom"), str("iso2"), str("avc1"), str("mp41"));
+  const moovSize = makeMoov(0, 0).length;
+  const vOff = ftyp.length + moovSize + 8;  // 映像データの始まり（mdatの箱の中）
+  const aOff = vOff + vData.length;         // 音データの始まり
+  const moov = makeMoov(vOff, aOff);
+  const mdat = box("mdat", vData, aData);
+  return flat([ftyp, moov, mdat]);
 }
 
 // 動画を保存（iPhoneは共有メニュー →「ビデオを保存」）
