@@ -114,6 +114,13 @@
   }
   #digestVideo { width: 100%; border-radius: 8px; margin-top: 10px; background: #000; }
   button:disabled { opacity: .5; }
+  /* BGMの切りかえ */
+  .seg { display: flex; gap: 6px; }
+  .seg button {
+    flex: 1; padding: 10px 4px; font-size: 13px;
+    background: #e8efe9; color: var(--main); font-weight: bold;
+  }
+  .seg button.on { background: var(--main); color: #fff; }
   details { margin-top: 16px; }
   summary { color: var(--main); font-weight: bold; font-size: 14px; padding: 6px 0; cursor: pointer; }
   details .scorer { margin-top: 10px; }
@@ -237,6 +244,12 @@
     <p class="note" style="margin:0 0 8px">写真を選ぶと「タイトル → 写真 → 結果カード」の動画を作ります（最大10枚）</p>
     <input type="file" id="digestPhotos" accept="image/*" multiple>
     <div id="digestThumbs"></div>
+    <label>BGM</label>
+    <div class="seg" id="bgmSeg">
+      <button data-mode="chant">チャント</button>
+      <button data-mode="drums">太鼓と手拍子だけ</button>
+      <button data-mode="none">オープニングのみ</button>
+    </div>
     <button class="big" id="digestBtn" onclick="makeDigest()">🎬 動画を作る</button>
     <div id="digestProgress" class="note" style="display:none"></div>
     <video id="digestVideo" controls playsinline style="display:none"></video>
@@ -1281,9 +1294,31 @@ function playIntroSound(ac, out, t) {
   chord(t + 1.3, [146.8, 220, 293.7, 349.2, 440], 2.1, 0.08); // 1.3秒〜：ジャーン（だんだん小さく）
 }
 
+// ===== BGMの切りかえ（チャント／太鼓と手拍子だけ／オープニングのみ） =====
+// 選んだものはiPhoneに覚えておく
+let bgmMode = "chant";
+try { bgmMode = localStorage.getItem("bgmMode") || "chant"; } catch (e) {}
+
+function renderBgmSeg() {
+  document.querySelectorAll("#bgmSeg button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.mode === bgmMode);
+  });
+}
+document.querySelectorAll("#bgmSeg button").forEach((b) => {
+  b.onclick = () => {
+    bgmMode = b.dataset.mode;
+    try { localStorage.setItem("bgmMode", bgmMode); } catch (e) {}
+    renderBgmSeg();
+  };
+});
+renderBgmSeg();
+
 // ===== BGM（スタジアムのチャント風。プログラムで一から作るオリジナル） =====
 // start ＝ BGMが始まる時刻、endStart ＝ 結果カードが出る時刻、end ＝ 動画の終わり
-function playBgm(ac, out, start, endStart, end) {
+// mode ＝ "chant"（全部）、"drums"（声なし）、"none"（BGMなし）
+function playBgm(ac, out, start, endStart, end, mode = "chant") {
+  if (mode === "none") return;
+  const withVoice = mode === "chant";
   const BEAT = 0.5;               // 1拍の長さ（1分に120拍）
   const BAR = BEAT * 4;           // 1小節（4拍）
   const E8 = BEAT / 2;            // 8分音符の長さ
@@ -1372,7 +1407,7 @@ function playBgm(ac, out, start, endStart, end) {
     voice.connect(f); f.connect(g); g.connect(bus);
   });
   // 大勢が同じ音を歌う：少しずつ音程のずれた声を何人分も重ねる（1オクターブ下も）
-  const sing = (t, freq, dur, vol = 0.05) => {
+  const sing = (t, freq, dur, vol = 0.2) => {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(vol, t + 0.07);
@@ -1414,7 +1449,8 @@ function playBgm(ac, out, start, endStart, end) {
         clap(tp);
       });
     }
-    // みんなの声
+    // みんなの声（「太鼓と手拍子だけ」のときは歌わない）
+    if (!withVoice) continue;
     let tm = t;
     melody.forEach(([fr, beats]) => {
       const dur = beats * BEAT;
@@ -1427,7 +1463,7 @@ function playBgm(ac, out, start, endStart, end) {
   const fin = endStart;
   for (let i = 0; i < 6; i++) drum(fin - 0.6 + i * 0.1, 0.4 + i * 0.06); // ドロロロ…
   drum(fin, 1.0);
-  [G4 / 2, B4 / 2, D4].forEach((fr) => sing(fin, fr, Math.min(2.5, end - fin), 0.035));
+  if (withVoice) [G4 / 2, B4 / 2, D4].forEach((fr) => sing(fin, fr, Math.min(2.5, end - fin), 0.14));
   {
     // 歓声「ワーッ」
     const s = noiseSrc(fin, end - fin, true);
@@ -1500,7 +1536,7 @@ async function makeDigestRecorder() {
     out.connect(ac.destination);
     playIntroSound(ac, out, ac.currentTime);
     const a0 = ac.currentTime;
-    playBgm(ac, out, a0 + 2.8, a0 + total - END_SEC, a0 + total);
+    playBgm(ac, out, a0 + 2.8, a0 + total - END_SEC, a0 + total, bgmMode);
   }
   await new Promise((resolve) => {
     function frame() {
@@ -1622,7 +1658,7 @@ async function encodeIntroAudio(total) {
     if (!(await AudioEncoder.isConfigSupported(cfg)).supported) return null;
     const oac = new OfflineAudioContext(CH, Math.ceil(SR * total), SR);
     playIntroSound(oac, oac.destination, 0);
-    playBgm(oac, oac.destination, 2.8, total - END_SEC, total); // オープニングの余韻が消えるころからBGM
+    playBgm(oac, oac.destination, 2.8, total - END_SEC, total, bgmMode); // オープニングの余韻が消えるころからBGM
     const buf = await oac.startRendering();
 
     const audio = { chunks: [], config: null, sampleRate: SR, channels: CH };
